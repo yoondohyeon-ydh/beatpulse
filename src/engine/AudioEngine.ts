@@ -186,7 +186,14 @@ export class AudioEngine {
 
       // 만약 soundCtxTime이 이미 지나치게 과거라면 (예: 시스템 지연) 현재 시각에 즉시 연주
       const playTime = Math.max(currentCtxTime, soundCtxTime);
-      this.playSyntheticInstrument(event.instrument, playTime, event.pitch, event.duration, event.volume);
+      this.playSyntheticInstrument(
+        event.instrument,
+        playTime,
+        event.pitch,
+        event.duration,
+        event.volume,
+        event.pitches
+      );
 
       this.eventCursor++;
     }
@@ -311,26 +318,42 @@ export class AudioEngine {
     time: number,
     pitch?: number,
     duration?: number,
-    volume: number = 0.8
+    volume: number = 0.8,
+    pitches?: number[]
   ): void {
     if (!this.ctx || !this.bgmGain) return;
 
-    switch (instrument) {
-      case 'kick':
-        this.synthKick(time, volume);
-        break;
-      case 'snare':
-        this.synthSnare(time, volume);
-        break;
-      case 'hihat':
-        this.synthHiHat(time, volume);
-        break;
-      case 'bass':
-        this.synthBass(time, pitch || 110, duration || 0.2, volume);
-        break;
-      case 'lead':
-        this.synthLead(time, pitch || 440, duration || 0.3, volume);
-        break;
+    try {
+      switch (instrument) {
+        case 'kick':
+          this.synthKick(time, volume);
+          break;
+        case 'snare':
+          this.synthSnare(time, volume);
+          break;
+        case 'hihat':
+          this.synthHiHat(time, volume);
+          break;
+        case 'bass':
+          this.synthBass(time, pitch || 110, duration || 0.2, volume);
+          break;
+        case 'lead':
+          this.synthLead(time, pitch || 440, duration || 0.3, volume);
+          break;
+        case 'chord':
+          this.synthChord(
+            time,
+            pitches && pitches.length > 0 ? pitches : [pitch || 220],
+            duration || 0.8,
+            volume
+          );
+          break;
+        case 'pluck':
+          this.synthPluck(time, pitch || 440, duration || 0.15, volume);
+          break;
+      }
+    } catch (e) {
+      console.warn('Synthesis dispatch error:', e);
     }
   }
 
@@ -549,6 +572,129 @@ export class AudioEngine {
       ref.disconnect();
       this.activeNodes.delete(ref);
     };
+  }
+
+  /**
+   * Chord / Pad: 복수 주파수(Triad/Dyad)를 레이어링하여 풍부하고 따뜻한 화성 패드 생성
+   */
+  private synthChord(time: number, pitches: number[], duration: number, volume: number): void {
+    if (!this.ctx || !this.bgmGain || pitches.length === 0) return;
+
+    // 보이스 수에 따른 헤드룸 자동 계산 (클리핑 방지)
+    const voiceGainAmount = (volume * 0.22) / Math.sqrt(pitches.length);
+    const stopTime = time + duration + 0.05;
+
+    for (let i = 0; i < pitches.length; i++) {
+      const pitch = pitches[i];
+      if (pitch <= 0 || !Number.isFinite(pitch)) continue;
+
+      try {
+        const osc = this.ctx.createOscillator();
+        const filter = this.ctx.createBiquadFilter();
+        const gain = this.ctx.createGain();
+
+        // 톱니파 + 삼각파 교차 배치 및 미세 디튠으로 아날로그 신스 패드 질감
+        osc.type = i % 2 === 0 ? 'sawtooth' : 'triangle';
+        osc.frequency.setValueAtTime(pitch, time);
+        // 약 -4 ~ +4 cents 디튠
+        osc.detune.setValueAtTime((i - (pitches.length - 1) / 2) * 4, time);
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(900, time);
+        filter.frequency.linearRampToValueAtTime(1400, time + duration * 0.5);
+        filter.frequency.linearRampToValueAtTime(800, stopTime);
+
+        // 부드러운 어택과 릴리즈 (클릭음 방지)
+        gain.gain.setValueAtTime(0.0001, time);
+        gain.gain.linearRampToValueAtTime(voiceGainAmount, time + Math.min(0.08, duration * 0.2));
+        gain.gain.setValueAtTime(voiceGainAmount, time + Math.max(0.08, duration * 0.7));
+        gain.gain.exponentialRampToValueAtTime(0.0001, stopTime);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.bgmGain);
+
+        osc.start(time);
+        osc.stop(stopTime);
+
+        const ref = {
+          stop: () => {
+            try { osc.stop(); } catch {}
+          },
+          disconnect: () => {
+            try {
+              osc.disconnect();
+              filter.disconnect();
+              gain.disconnect();
+            } catch {}
+          },
+        };
+        this.activeNodes.add(ref);
+
+        osc.onended = () => {
+          ref.disconnect();
+          this.activeNodes.delete(ref);
+        };
+      } catch (e) {
+        console.warn('synthChord voice error:', e);
+      }
+    }
+  }
+
+  /**
+   * Pluck: 빠른 어택과 필터 스윕을 가진 경쾌하고 명료한 신스 플럭 사운드
+   */
+  private synthPluck(time: number, pitch: number, duration: number, volume: number): void {
+    if (!this.ctx || !this.bgmGain || pitch <= 0 || !Number.isFinite(pitch)) return;
+
+    try {
+      const osc = this.ctx.createOscillator();
+      const filter = this.ctx.createBiquadFilter();
+      const gain = this.ctx.createGain();
+      const stopTime = time + duration + 0.03;
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(pitch, time);
+
+      // 밝은 필터에서 빠르게 닫히는 플럭 엔벨로프
+      const startCutoff = Math.min(8000, pitch * 4.5);
+      const endCutoff = Math.max(300, pitch * 1.2);
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(startCutoff, time);
+      filter.frequency.exponentialRampToValueAtTime(endCutoff, time + duration);
+
+      // 빠른 감쇠 퍼커시브 게인 엔벨로프
+      gain.gain.setValueAtTime(volume * 0.45, time);
+      gain.gain.exponentialRampToValueAtTime(0.0001, stopTime);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.bgmGain);
+
+      osc.start(time);
+      osc.stop(stopTime);
+
+      const ref = {
+        stop: () => {
+          try { osc.stop(); } catch {}
+        },
+        disconnect: () => {
+          try {
+            osc.disconnect();
+            filter.disconnect();
+            gain.disconnect();
+          } catch {}
+        },
+      };
+      this.activeNodes.add(ref);
+
+      osc.onended = () => {
+        ref.disconnect();
+        this.activeNodes.delete(ref);
+      };
+    } catch (e) {
+      console.warn('synthPluck error:', e);
+    }
   }
 
   /**

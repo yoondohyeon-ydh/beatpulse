@@ -275,12 +275,13 @@ export class GameLoop {
     }
 
     // 5. 곡 종료 조건 검사
-    // 마지막 노트 시간 + 1.5초 쿨다운 후 결과 화면 전환
+    // 아웃트로 음악이 완전히 완결될 때까지 보장하고(track.duration), 모든 노트 판정이 완료된 후 결과 화면으로 전환
     const lastNote = this.notes[this.notes.length - 1];
-    const songEndTime = lastNote ? lastNote.time + 1.5 : this.track.duration;
+    const notesFinishedTime = lastNote ? lastNote.time + 1.2 : this.track.duration;
+    const targetEndTime = Math.max(this.track.duration, notesFinishedTime);
     const allJudged = this.notes.length > 0 && this.notes.every((n) => n.isJudged);
 
-    if ((allJudged || gameTime > songEndTime) && gameTime > 1.0) {
+    if (gameTime > 1.0 && ((allJudged && gameTime >= targetEndTime) || gameTime > targetEndTime + 1.5)) {
       this.stop();
       if (this.onSongEnd) {
         this.onSongEnd({ ...this.stats });

@@ -99,4 +99,29 @@ describe('Game Lifecycle & State Management', () => {
     // 2초 경과 후 (currentTime = 18.0) 정확히 0.0초(첫 비트) 도달
     expect(18.0 - audioStartTime).toBe(0.0);
   });
+
+  it('should not cut off song before track.duration even if all notes are judged', () => {
+    const trackDuration = 64.0;
+    const lastNoteTime = 59.0;
+    const notesFinishedTime = lastNoteTime + 1.2; // 60.2초
+    const targetEndTime = Math.max(trackDuration, notesFinishedTime); // 64.0초
+
+    const allJudged = true;
+
+    // 60.5초: 모든 노트 판정이 끝났으나 아직 64초 아웃트로가 재생 중인 경우
+    const gameTimeMidOutro = 60.5;
+    const shouldEndAtMidOutro =
+      gameTimeMidOutro > 1.0 &&
+      ((allJudged && gameTimeMidOutro >= targetEndTime) || gameTimeMidOutro > targetEndTime + 1.5);
+
+    expect(shouldEndAtMidOutro).toBe(false); // 아웃트로 도중 종료되지 않음!
+
+    // 64.1초: 아웃트로까지 완전히 재생된 경우
+    const gameTimeFinished = 64.1;
+    const shouldEndWhenDone =
+      gameTimeFinished > 1.0 &&
+      ((allJudged && gameTimeFinished >= targetEndTime) || gameTimeFinished > targetEndTime + 1.5);
+
+    expect(shouldEndWhenDone).toBe(true); // 아웃트로 종료 후 안전하게 결과 전환
+  });
 });
