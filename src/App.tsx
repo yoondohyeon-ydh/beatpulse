@@ -81,6 +81,7 @@ export default function App() {
 
   // 카운트다운 완료 시 실제 연주 시작
   const handleCountdownComplete = useCallback(() => {
+    audioEngine.ensureRunning();
     previousStateRef.current = 'PLAYING';
     setGameState('PLAYING');
   }, []);
@@ -120,6 +121,7 @@ export default function App() {
   // 곡 종료 시 결과 집계
   const handleSongEnd = useCallback(
     (finalStats: ScoreStats) => {
+      audioEngine.stopAndCleanup();
       setStats(finalStats);
       const res = saveHighScore(
         selectedTrack.id,

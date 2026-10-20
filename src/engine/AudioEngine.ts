@@ -56,12 +56,20 @@ export class AudioEngine {
         this.createNoiseBuffer();
 
         // 시스템 상태 변경 감지 (헤드폰 연결 해제, 전화 수신 등)
+        let lastState = this.ctx.state;
         this.ctx.onstatechange = () => {
-          if (this.ctx && (this.ctx.state === 'suspended' || (this.ctx.state as string) === 'interrupted')) {
+          if (!this.ctx) return;
+          const currentState = this.ctx.state;
+          // 이전에 running 상태였던 오디오가 시스템에 의해 외부 요인으로 중단된 경우에만 일시정지
+          if (
+            lastState === 'running' &&
+            (currentState === 'suspended' || (currentState as string) === 'interrupted')
+          ) {
             if (this.isPlaying && !this.isPaused && this.onExternalPauseCallback) {
               this.onExternalPauseCallback();
             }
           }
+          lastState = currentState;
         };
       }
 
@@ -112,10 +120,13 @@ export class AudioEngine {
    * @param countdownDurationSec 카운트다운 지속 시간 (초, 예: 3.0)
    */
   public startTrack(events: SoundEvent[], countdownDurationSec: number = 3.0): void {
-    this.stopAndCleanup();
+    this.stopSchedulerLoop();
+    this.stopAllActiveNodes();
 
     if (!this.ctx) {
       this.initAudio();
+    } else if (this.ctx.state === 'suspended') {
+      this.ctx.resume().catch((e) => console.warn('AudioContext resume in startTrack failed:', e));
     }
 
     const currentCtxTime = this.ctx ? this.ctx.currentTime : 0;
@@ -256,6 +267,18 @@ export class AudioEngine {
   }
 
   /**
+   * 카운트다운 완료 또는 활성화 시 AudioContext가 정상 동작 중인지 확인 및 보장
+   */
+  public ensureRunning(): void {
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch((e) => console.warn('AudioContext ensureRunning failed:', e));
+    }
+    if (this.isPaused) {
+      this.resume();
+    }
+  }
+
+  /**
    * 현재 절대 게임 진행 시간 (초) 반환
    * - 카운트다운 중: 음수 (< 0)
    * - 연주 중: 0 이상
@@ -265,6 +288,9 @@ export class AudioEngine {
     if (!this.isPlaying) return 0;
     if (this.isPaused) return this.pausedGameTime;
     if (!this.ctx) return 0;
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
     return this.ctx.currentTime - this.audioStartTime;
   }
 

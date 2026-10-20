@@ -127,7 +127,7 @@ export class GameLoop {
   }
 
   public start(): void {
-    this.stop();
+    if (this.isRunning) return;
     this.isRunning = true;
     this.isPaused = false;
 
@@ -140,8 +140,12 @@ export class GameLoop {
       lastTimestamp = timestamp;
 
       if (!this.isPaused) {
-        this.update(deltaSec);
-        this.render();
+        try {
+          this.update(deltaSec);
+          this.render();
+        } catch (e) {
+          console.error('Error in GameLoop tick:', e);
+        }
       }
 
       this.rafId = requestAnimationFrame(loop);
@@ -169,7 +173,6 @@ export class GameLoop {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
-    audioEngine.stopAndCleanup();
   }
 
   public destroy(): void {
@@ -275,7 +278,7 @@ export class GameLoop {
     // 마지막 노트 시간 + 1.5초 쿨다운 후 결과 화면 전환
     const lastNote = this.notes[this.notes.length - 1];
     const songEndTime = lastNote ? lastNote.time + 1.5 : this.track.duration;
-    const allJudged = this.notes.every((n) => n.isJudged);
+    const allJudged = this.notes.length > 0 && this.notes.every((n) => n.isJudged);
 
     if ((allJudged || gameTime > songEndTime) && gameTime > 1.0) {
       this.stop();
@@ -349,7 +352,7 @@ export class GameLoop {
 
     // 3. 하강하는 노트 렌더링 (판정 엔진과 동일한 보정 목표 시각 적용)
     const gameTime = audioEngine.getCurrentGameTime();
-    const speed = 550 * this.settings.noteSpeed; // 초당 이동 픽셀
+    const speed = 550 * Math.max(this.settings.noteSpeed, 0.1); // 초당 이동 픽셀, clamp min speed
     const safeOffset = clampOffset(this.settings.userOffsetMs);
 
     for (const note of this.notes) {
